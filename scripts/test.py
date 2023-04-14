@@ -24,8 +24,8 @@ for limit in limit_range:
     work = np.append(work, np.zeros((1, 3)), axis=0)
 
     for collision in collision_range:
-        grop = Grop(gripper, map)
-        grop.map.set_map(name, limit=limit)
+        grop = Grop(gripper, objects)
+        grop.objects.set_map(name, limit)
         print("limit: ", limit)
         print("collision: ", collision)
         grop.collision = collision
@@ -39,14 +39,14 @@ for limit in limit_range:
     np.savetxt(name + ".txt", work)
 
 figure = plt.figure()
-axes = figure.add_subplot()
+ax = figure.add_subplot()
 index = list(range(0, limit_max + 1))
-axes.plot(index, work[index])
-axes.xaxis.set_major_locator(MaxNLocator(integer=True))
-# axes.set_yscale("log")
-axes.set_xlabel("Anzahl von Punkten $n_p$")
-axes.set_ylabel("Arbeitseinheiten [s]")
-axes.set_title("Nebenbedingungen zur Verhinderung von Kollisionen")
-axes.legend(["keine", "alle", "faul"])
+ax.plot(index, work[index])
+ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+# ax.set_yscale("log")
+ax.set_xlabel("Anzahl von Punkten $n_p$")
+ax.set_ylabel("Arbeitseinheiten [s]")
+ax.set_title("Nebenbedingungen zur Verhinderung von Kollisionen")
+ax.legend(["keine", "alle", "faul"])
 figure.savefig("test/" + name + ".svg")
 figure.show()

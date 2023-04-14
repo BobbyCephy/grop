@@ -7,21 +7,21 @@ from config import *
 from utils import *
 
 package_path = rospkg.RosPack().get_path("robot_gripper_camera")
-part_path = os.path.join(package_path, "part")
-mesh_path = os.path.join(part_path, "mesh")
+object_path = os.path.join(package_path, "object")
+mesh_path = os.path.join(object_path, "mesh")
 mesh_files = os.listdir(mesh_path)
 
 
-def xacro_part(model):
-    return os.path.join(part_path, model + ".urdf.xacro")
+def xacro_object(model):
+    return os.path.join(object_path, model + ".urdf.xacro")
 
 
 def urdf_string(xacro_file, **kwargs):
     return xacro.process_file(xacro_file, mappings=kwargs).toxml()
 
 
-def urdf_part(model, **kwargs):
-    return urdf_string(xacro_part(model), **kwargs)
+def urdf_object(model, **kwargs):
+    return urdf_string(xacro_object(model), **kwargs)
 
 
 for _ in range(2):
@@ -36,14 +36,15 @@ for _ in range(2):
         import simulation
 
 
-def delete(name):
-    delete_model(DeleteModelRequest(model_name=name))
+def delete_model(*names):
+    for name in names:
+        delete_model_service(DeleteModelRequest(model_name=name))
 
 
-def spawn(model, pose, name, **kwargs):
-    spawn_sdf_model(
+def spawn_model(model, pose, name, **kwargs):
+    spawn_sdf_model_service(
         model_name=name,
-        model_xml=urdf_part(model, name=name, **kwargs),
+        model_xml=urdf_object(model, name=name, **kwargs),
         initial_pose=pose,
         reference_frame="robot",
     )
@@ -54,7 +55,7 @@ def spawn_cuboid(size, pose, suffix=""):
     model = "cuboid"
     name = model + suffix
 
-    spawn(
+    spawn_model(
         model,
         pose,
         name,
@@ -68,61 +69,63 @@ def spawn_cuboid(size, pose, suffix=""):
 
 def spawn_mesh(file, pose):
     name = os.path.splitext(os.path.basename(file))[0]
-    spawn("mesh", pose, name, file=file)
+    spawn_model("mesh", pose, name, file=file)
+    model_names.append(name)
     return name
 
 
 from pick_and_place import *
 
 robot = RobotGripper()
-
-
-def cuboids(size, n=1, m=None):
-    if m is None:
-        m = n
-
-    names = []
-
-    for i in range(n):
-        for j in range(m):
-            position = source[(i + 1 / 2) / n, (j + 1 / 2) / m, 0]
-            names.append(spawn_cuboid(size, pose(position), str(i) + str(j)))
-
-    if n == 1 and m == 1:
-        map_name = "cuboid" + "/" + "x".join(str(s) for s in size)
-
-    else:
-        map_name = "grid" + "/" + str(n) + "x" + str(m)
-
-    robot.generate_map(map_name)
-
-    for name in names:
-        delete(name)
-
-
+model_names = []
 size = np.array([0.5, 1, 2]) * d_olim[1]
+
+def generate_map(map_name, model_names, wait=False):
+    robot.generate_map(map_name, 5)
+    if wait:
+        input()
+    delete_model(*model_names)
+
+
+def spawn_cuboids(size=size, number=1):
+    number = np.resize(number, 3)
+
+    for index in np.ndindex(*number):
+        rel = (np.array(index) + 1 / 2) / number
+        rel[2] = 0
+        position = source[rel]
+        position[2] += index[2] * size[2]
+        model_names.append(
+            spawn_cuboid(size, pose(position), "x".join(map(str, index)))
+        )
+
+    map_name = "_".join(["cuboid", *map(join_x, [size, number])])
+
+    return map_name, model_names
+
+
+def map_cuboids(*args, **kwargs):
+    generate_map(*spawn_cuboids(*args, **kwargs))
+
+
+def map_meshes():
+    for file in mesh_files:
+        file_path = os.path.join(mesh_path, file)
+        position = source[1 / 2, 1, 0]
+        map_name = spawn_mesh(file_path, pose(position))
+        robot.generate_map(map_name, map_name)
 
 
 def cuboid():
     for y in range(1, 10):
-        cuboids([size[0], size[0] * y, size[2]])
+        map_cuboids([size[0], size[0] * y, size[2]])
 
 
 def grid():
     for x in range(1, 5):
         for y in range(1, 5):
-            cuboids(size, x, y)
-
-
-def meshes():
-    for file in mesh_files:
-        file_path = os.path.join(mesh_path, file)
-        position = source[1 / 2, 1, 0]
-        name = spawn_mesh(file_path, pose(position))
-
-        robot.generate_map("mesh" + "/" + name)
-        delete(name)
+            map_cuboids(size, x, y)
 
 
 if __name__ == "__main__":
-    grid()
+    map_cuboids(size, (1, 3, 1))

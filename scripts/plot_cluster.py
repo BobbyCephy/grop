@@ -6,9 +6,10 @@ if __name__ == "__main__":
     from config import *
 
     name = "cuboids"
-    map.set_map(name)
-    grop = Grop(gripper, map)
+    objects.set_map(name)
+    objects.cluster()
+    grop = Grop(gripper, objects)
     grop.plot.points()
-    grop.plot.world_frame()
+    #grop.plot.world_frame()
     grop.plot.save("cluster")
     grop.plot.show()

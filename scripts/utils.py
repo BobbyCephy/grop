@@ -3,38 +3,71 @@ import numpy as np
 import rospy
 from geometry_msgs.msg import *
 from tf.transformations import *
+import gurobipy as gp
+import os
+
+verbose = True
+verboseprint = print if verbose else lambda *args, **kwargs: None
 
 
-class Cuboid:
-    def __init__(self, **kwargs):
-        for key in ["size", "center", "min", "max", "corners"]:
-            setattr(self, key, kwargs.get(key, []))
+def map_file(name):
+    file = os.path.splitext(name)[0] + ".bt"
+    path = os.path.join(os.getcwd(), "map", file)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    return path
 
-        if len(self.size):
-            if len(self.center):
-                self.min, self.max = (
-                    f(self.center, np.abs(self.size) / 2) for f in [np.subtract, np.add]
-                )
 
-            else:
-                if len(self.min):
-                    self.max = np.add(self.min, self.size)
+def mvar_to_var(*args):
+    """
+    Convert Gurobi MVars to NumPy ndarrays of Vars
+    """
+    if len(args) == 1:
+        try:
+            return np.array(args[0].tolist())
 
-                elif len(self.max):
-                    self.min = np.subtract(self.max, self.size)
+        except:
+            try:
+                if args[0].size == 1:
+                    return args[0].item()
 
-                self.center = np.mean([self.min, self.max], axis=0)
+                else:
+                    return np.fromiter(map(mvar_to_var, args[0]), object)
 
-        elif len(self.corners):
-            self.min, self.max = (f(self.corners, axis=0) for f in [np.min, np.max])
-            self.size = self.max - self.min
+            except:
+                return args[0]
 
-        self.limits = np.array([self.min, self.max])
+    return map(mvar_to_var, args)
 
-    def __getitem__(self, index):
-        return self.min[0 : len(index)] + self.size[0 : len(index)] * np.clip(
-            index, 0, 1
-        )
+
+def value(x):
+    """Replaces variables in x with solution values"""
+    try:
+        try:
+            return x.getValue()
+
+        except:
+            return x.X
+
+    except:
+        if len(x) != 1:
+            x = np.copy(x)
+
+            for index, item in np.ndenumerate(x):
+                try:
+                    x[index] = value(item.item())
+
+                except:
+                    continue
+
+        return x
+
+
+def silent_model():
+    """Gurobi model without console output"""
+    env = gp.Env(empty=True)
+    env.setParam("OutputFlag", 0)
+    env.start()
+    return gp.Model(env=env)
 
 
 def normalize(vector):
@@ -50,7 +83,7 @@ def eulerToQuaternion(roll=0, pitch=0, yaw=0):
     return Quaternion(quaternion[0], quaternion[1], quaternion[2], quaternion[3])
 
 
-def matrixToPose(position, rotation):
+def matrixToPose(rotation, position):
     angle = euler_from_matrix(rotation)
     quaternion = quaternion_from_euler(*angle)
     return pose(position, quaternion)
@@ -61,7 +94,7 @@ def lookAt(position, target, up=np.array([0, 0, 1]), left=np.array([0, 1e-6, 0])
     left = normalize(np.cross(normalize(up), forward) + left)
     up = np.cross(forward, left)
     rotation = np.array([forward, left, up]).T
-    return matrixToPose(position, rotation)
+    return matrixToPose(rotation, position)
 
 
 def lookAtPath(positions, targets, numberPoints=10, relative=False, back=True):
@@ -91,4 +124,14 @@ def service(namespace, *names_classes, wait=True):
     for name, service_class in names_classes:
         if wait:
             rospy.wait_for_service(name, 3)
-        namespace[name.split("/")[-1]] = rospy.ServiceProxy(name, service_class)
+        namespace[name.split("/")[-1] + suffix("service")] = rospy.ServiceProxy(
+            name, service_class
+        )
+
+
+def suffix(x):
+    return "_" + str(x) if x else ""
+
+
+def join_x(x):
+    return "x".join(map(str, x))

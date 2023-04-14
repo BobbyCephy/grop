@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -23,7 +24,7 @@ if __name__ == "__main__":
 
     x = np.linspace(0, 2 * np.pi, 100)
     plt.plot(*f(x))
-    axes = plt.gca()
-    axes.set_aspect("equal")
-    dimensioning(axes, [f(0), f(3 / 2 * np.pi)])
+    ax = plt.gca()
+    ax.set_aspect("equal")
+    dimensioning(ax, [f(0), f(3 / 2 * np.pi)])
     plt.show()

@@ -2,11 +2,11 @@
 from grop import Grop
 from config import *
 
-grop = Grop(gripper, map)
+grop = Grop(gripper, objects)
 
 for name in ["Lego_brick"]:
     limit = 40
-    grop.map.set_map(name, "mesh", limit=limit)
+    grop.objects.set_map("mesh" + "/" + name, limit)
     grop.optimize()
     grop.plot.points()
     grop.plot.bodies()

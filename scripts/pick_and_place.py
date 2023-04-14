@@ -1,9 +1,6 @@
 #!/usr/bin/env python
-from sqlite3 import OperationalError
 import sys
-import os
 import copy
-from tkinter import Y
 import rospy
 import moveit_commander
 import moveit_msgs.srv
@@ -13,10 +10,6 @@ from moveit_msgs.msg import *
 from trajectory_msgs.msg import *
 from moveit_msgs.srv import *
 from std_srvs.srv import *
-import numpy as np
-import matplotlib.pyplot as plt
-from math import pi, tau, dist, fabs, cos
-from moveit_commander.conversions import pose_to_list
 from tf.transformations import *
 from urdf_parser_py.urdf import URDF
 from grop import *
@@ -64,26 +57,26 @@ class RobotGripper(object):
         self.setScene()
         self.home()
 
-    def start(self):
+    def cycle(self, **kwargs):
+        self.find_pose()
+        self.pick_and_place(**kwargs)
+
+    def find_pose(self):
         self.generate_map()
-        self.pick_and_place()
+        self.generate_pose()
 
-    def generate_map(self, *args):
-        self.inspect(source)
+    def generate_map(self, name="map", times=1):
+        self.inspect(source, times)
         self.home()
-        self.save_map(*args)
+        self.save_map(name)
 
-    def pick_and_place(self):
-        self.grop()
-        self.pick()
+    def pick_and_place(self, **kwargs):
+        self.pick(**kwargs)
         self.place()
         self.home()
 
-    def save_map(self, name="map", path=os.path.join(os.getcwd(), "map")):
-        file = os.path.join(path, name + ".bt")
-        os.makedirs(os.path.dirname(file), exist_ok=True)
-
-        if save_map(file):
+    def save_map(self, name="map"):
+        if save_map_service(map_file(name)):
             rospy.loginfo("Map saved")
 
         else:
@@ -92,7 +85,7 @@ class RobotGripper(object):
     def setAllowedCollision(self, object, link, allowed=True):
         request = PlanningSceneComponents()
         request.components += PlanningSceneComponents.ALLOWED_COLLISION_MATRIX
-        planning_scene = get_planning_scene(request).scene
+        planning_scene = get_planning_scene_service(request).scene
         planning_scene.is_diff = True
 
         try:
@@ -134,10 +127,10 @@ class RobotGripper(object):
         poseStamped.pose.position = Point()
         poseStamped.pose.orientation = eulerToQuaternion()
 
-        poseStamped.pose.position = Point(*desk.center)
+        poseStamped.pose.position = Point(*desk.get_center())
         self.scene.add_box("desk", poseStamped, size=desk_size)
 
-        poseStamped.pose.position = Point(*floor.center)
+        poseStamped.pose.position = Point(*floor.get_center())
         self.scene.add_box("floor", poseStamped, size=floor_size)
 
         # self.scene.add_plane("surface", poseStamped)
@@ -187,15 +180,15 @@ class RobotGripper(object):
         self.go(self.jointsHome)
         self.grip(0)
 
-    def inspect(self, space, times=10):
+    def inspect(self, space, times=1):
         positions, targets = (
             [
                 space[x, y, z]
                 for x, y in [
-                    (1 / 4, 1 / 4),
-                    (1 / 4, 3 / 4),
-                    (3 / 4, 3 / 4),
-                    (3 / 4, 1 / 4),
+                    (1 / 4, 1 / 8),
+                    (1 / 4, 7 / 8),
+                    (3 / 4, 7 / 8),
+                    (3 / 4, 1 / 8),
                 ]
             ]
             for z in [1, 0]
@@ -205,15 +198,6 @@ class RobotGripper(object):
 
         for _ in range(times):
             self.go(self.poses, "camera_link")
-
-    def grop(self):
-        gp = Grop(gripper, space(0))
-        position, rotation = gp.optimize()
-        self.posePick = PoseStamped()
-        self.posePick.header.frame_id = self.world
-        self.posePick.pose = matrixToPose(position, rotation)
-        self.scene.add_box("part", self.posePick, size=3 * (0.05,))
-        clear_octomap()
 
     def jointTrajectory(self, target, time):
         jointTrajectory = JointTrajectory()
@@ -226,9 +210,20 @@ class RobotGripper(object):
         ]
         return jointTrajectory
 
-    def pick(self):
+    def generate_pose(self):
+        gp = Grop(gripper, objects)
+        objects.set_map()
+        pose = gp.optimize()
+        self.posePick = PoseStamped()
+        self.posePick.header.frame_id = self.world
+        self.posePick.pose = pose.pose()
+        self.scene.add_box("object", self.posePick, size=3 * (0.05,))
+        clear_octomap_service()
+        return self.posePick
+
+    def pick(self, test=False):
         self.grasp = Grasp()
-        self.grasp.allowed_touch_objects = ["part", "desk"]
+        self.grasp.allowed_touch_objects = ["object", "desk"]
         self.grasp.grasp_pose = self.posePick
 
         self.grasp.pre_grasp_approach.direction.header.frame_id = self.world
@@ -244,13 +239,15 @@ class RobotGripper(object):
         self.grasp.pre_grasp_posture = self.jointTrajectory(
             self.jointsOpen, self.timeClose
         )
-        self.grasp.grasp_posture = self.jointTrajectory(
-            self.jointsClose, self.timeClose
+        self.grasp.grasp_posture = (
+            self.grasp.pre_grasp_posture
+            if test
+            else self.jointTrajectory(self.jointsClose, self.timeClose)
         )
 
-        self.arm.pick("part", self.grasp)
+        self.arm.pick("object", self.grasp)
 
-    def place(self, layout="m", n=10, m=10):
+    def place(self, layout="g", n=10, m=10):
         self.placeLocations = []
         placeLocation = PlaceLocation()
         placeLocation.allowed_touch_objects = copy.deepcopy(
@@ -271,23 +268,28 @@ class RobotGripper(object):
                     placeLocation.place_pose.pose.position.x = position[0]
                     placeLocation.place_pose.pose.position.y = position[1]
                     self.placeLocations.append(placeLocation)
+
         else:
             if layout.startswith("m"):  # mirror else same
                 placeLocation.place_pose.pose.position.y += (
-                    (-1) ** (placeLocation.place_pose.pose.position.y > space.center[1])
+                    (-1)
+                    ** (
+                        placeLocation.place_pose.pose.position.y > space.get_center()[1]
+                    )
                     * space.size[1]
                     / 2
                 )
+
             self.placeLocations.append(placeLocation)
 
-        self.arm.place("part", self.placeLocations)
-        self.scene.remove_world_object("part")
+        self.arm.place("object", self.placeLocations)
+        self.scene.remove_world_object("object")
 
 
 if __name__ == "__main__":
     try:
         robot = RobotGripper()
-        robot.generate_map()
+        robot.cycle()
 
     except rospy.ROSInterruptException:
         pass
