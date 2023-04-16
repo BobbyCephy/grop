@@ -1,11 +1,12 @@
 #!/usr/bin/env python
-import cdd
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from dimensioning import *
 import numpy as np
 import gurobipy as gp
 from utils import *
 from plot import Plot3d
+import sage.all as sage
+from sage.geometry.polyhedron.plot import cyclic_sort_vertices_2d
 
 
 class Polytope:
@@ -110,9 +111,9 @@ class Polytope:
         transform=False,
         **kwargs
     ):
-        self.vertex(T, transform)
+        self.get_facets(T, transform)
 
-        if self.vertices:
+        if self.facets:
             if not ax:
                 plot3d = Plot3d()
                 ax = plot3d.ax
@@ -121,7 +122,7 @@ class Polytope:
             else:
                 show = False
 
-            polygons = Poly3DCollection(self.faces)
+            polygons = Poly3DCollection(self.facets)
             polygons.set_color("white")
             polygons.set_edgecolor("black")
             polygons.set_alpha(0)
@@ -146,12 +147,11 @@ class Polytope:
                     ax.text(*mean, edge_text, backgroundcolor="white")
 
             if show:
-                ax.set_aspect("equal", "box")
                 plot3d.show()
                 plot3d.save()
                 return ax
 
-    def vertex(self, T=None, transform=False):
+    def get_facets(self, T=None, transform=False):
         A = value(self.A)
         b = value(self.b)
 
@@ -161,46 +161,16 @@ class Polytope:
         if transform:
             A, b = self.parent.T.inv.transform(A, b)
 
-        matrix = cdd.Matrix([[bi, *(-a for a in Ai)] for Ai, bi in zip(A, b)])
-        matrix.rep_type = cdd.RepType.INEQUALITY
-        self.polyhedron = cdd.Polyhedron(matrix)
-        self.vertices = [list(x[1:]) for x in self.polyhedron.get_generators() if x[0]]
-        self.adjacencies = [list(x) for x in self.polyhedron.get_adjacency()]
-        self.incidences = [list(x) for x in self.polyhedron.get_input_incidence() if x]
-        self.sort_incidences()
-        self.faces = [
-            [self.vertices[index] for index in incidence]
-            for incidence in self.incidences
+        ieqs = np.concatenate(([b], -A.T)).T
+        P = sage.Polyhedron(ieqs=ieqs)
+        self.vertices = P.vertices_list()
+        self.facets = [
+            [
+                list(vertex.vector())
+                for vertex in cyclic_sort_vertices_2d(facet.vertices())
+            ]
+            for facet in P.facets()
         ]
-        self.get_edges()
-
-    def get_edges(self):
-        self.edges_indices = []
-
-        for i, adjacency in enumerate(self.adjacencies):
-            for j in adjacency:
-                edge = {i, j}
-
-                if edge not in self.edges_indices:
-                    self.edges_indices.append(edge)
-
-        self.edges = [
-            [self.vertices[index] for index in indice] for indice in self.edges_indices
-        ]
-
-    def sort_incidences(self):
-        for incidence in self.incidences:
-            incidenceSorted = [incidence.pop(0)]
-
-            while incidence:
-                for index in incidence:
-                    if index in self.adjacencies[incidenceSorted[-1]]:
-                        incidence.remove(index)
-                        incidenceSorted.append(index)
-                        break
-
-            incidence += incidenceSorted
-        return self.incidences
 
 
 class Rectangle(Polytope):
